@@ -38,6 +38,8 @@ def salvar_estoque(estoque):
 
 @app.post("/estoque/adicionar")
 def adicionar_item(item: ItemModel):
+    if not item.categoria or not item.item:
+        raise HTTPException(status_code=400, detail="Categoria e item são obrigatórios")
     estoque = carregar_estoque()
     cat = item.categoria.upper()
 
@@ -55,6 +57,31 @@ def adicionar_item(item: ItemModel):
     salvar_estoque(estoque)
     return {"msg": f"Item adicionado/atualizado na categoria {cat}"}
 
+
+@app.post("/estoque/remover")
+def remover_item(item: ItemModel):
+    estoque = carregar_estoque()
+    cat = item.categoria.upper()
+
+    if cat in estoque and item.item in estoque[cat]:
+        estoque[cat][item.item]["quantidade"] -= item.quantidade
+        if estoque[cat][item.item]["quantidade"] <= 0:
+            del estoque[cat][item.item]
+        salvar_estoque(estoque)
+        return {"msg": "Quantidade removida"}
+    raise HTTPException(status_code=404, detail="Item não encontrado")
+
+
+@app.delete("/estoque/remover_total")
+def remover_item_total(categoria: str, item: str):
+    estoque = carregar_estoque()
+    cat = categoria.upper()
+
+    if cat in estoque and item in estoque[cat]:
+        del estoque[cat][item]
+        salvar_estoque(estoque)
+        return {"msg": "Item removido completamente"}
+    raise HTTPException(status_code=404, detail="Item não encontrado")
 
 @app.get("/estoque")
 def get_estoque():
