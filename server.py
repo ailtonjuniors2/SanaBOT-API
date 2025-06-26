@@ -6,6 +6,9 @@ import httpx
 import asyncio
 
 app = FastAPI()
+@app.get("/")
+def home():
+    return {"message": "API de Estoque Online", "status": "ativo"}
 CAMINHO_ESTOQUE = "estoque.json"
 
 if __name__ == "__main__":
