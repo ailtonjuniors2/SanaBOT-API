@@ -38,21 +38,17 @@ def salvar_estoque(estoque):
 
 @app.post("/estoque/adicionar")
 def adicionar_item(item: ItemModel):
-    if not item.categoria or not item.item:
-        raise HTTPException(status_code=400, detail="Categoria e item são obrigatórios")
     estoque = carregar_estoque()
     cat = item.categoria.upper()
 
     if cat not in estoque:
         estoque[cat] = {}
 
-    if item.item in estoque[cat]:
-        estoque[cat][item.item]["quantidade"] += item.quantidade
-    else:
-        estoque[cat][item.item] = {
-            "quantidade": item.quantidade,
-            "preco": item.preco if item.preco else 50.00  # Valor padrão
-        }
+    # Remova o valor padrão e use sempre o preço enviado
+    estoque[cat][item.item] = {
+        "quantidade": item.quantidade,
+        "preco": item.preco  # Sem fallback para 50.00
+    }
 
     salvar_estoque(estoque)
     return {"msg": f"Item adicionado/atualizado na categoria {cat}"}
