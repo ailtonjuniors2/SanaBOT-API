@@ -1,99 +1,100 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
-import json
-import os
+from sqlalchemy.orm import Session
+from database import SessionLocal, Item, engine
 
 app = FastAPI()
 
-CAMINHO_ESTOQUE = "estoque.json"
-
+# ------------------- MODELO Pydantic -------------------
 class ItemModel(BaseModel):
     categoria: str
     item: str
     quantidade: int
-    preco: float = None  # Novo campo (usado apenas em /adicionar)
+    preco: float = None
 
-# Inicializa estoque se não existir
-def carregar_estoque():
-    if not os.path.exists(CAMINHO_ESTOQUE):
-        with open(CAMINHO_ESTOQUE, "w") as f:
-            json.dump({}, f)
-    with open(CAMINHO_ESTOQUE, "r") as f:
-        return json.load(f)
+# ------------------- DEPENDÊNCIA -------------------
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-def salvar_estoque(estoque):
-    with open(CAMINHO_ESTOQUE, "w") as f:
-        json.dump(estoque, f, indent=4)
+# ------------------- ENDPOINTS -------------------
 
 @app.get("/")
 def home():
-    return {"message": "API de Estoque Online", "status": "ativo"}
+    return {"message": "API de Estoque Online (SQLite)", "status": "ativo"}
 
 @app.get("/estoque")
-def get_estoque():
-    return carregar_estoque()
+def listar_estoque(db: Session = Depends(get_db)):
+    itens = db.query(Item).all()
+    resultado = {}
+    for i in itens:
+        cat = i.categoria.upper()
+        if cat not in resultado:
+            resultado[cat] = {}
+        resultado[cat][i.item] = {
+            "quantidade": i.quantidade,
+            "preco": i.preco
+        }
+    return resultado
 
 @app.post("/estoque/adicionar")
-def adicionar_item(item: ItemModel):
-    estoque = carregar_estoque()
+def adicionar_item(item: ItemModel, db: Session = Depends(get_db)):
     cat = item.categoria.upper()
+    item_existente = db.query(Item).filter_by(categoria=cat, item=item.item).first()
 
-    if cat not in estoque:
-        estoque[cat] = {}
+    if item_existente:
+        item_existente.quantidade += item.quantidade
+        if item.preco is not None:
+            item_existente.preco = item.preco
+    else:
+        novo_item = Item(categoria=cat, item=item.item, quantidade=item.quantidade, preco=item.preco)
+        db.add(novo_item)
 
-    estoque[cat][item.item] = {
-        "quantidade": item.quantidade,
-        "preco": item.preco
-    }
-
-    salvar_estoque(estoque)
+    db.commit()
     return {"msg": f"Item adicionado/atualizado na categoria {cat}"}
 
 @app.post("/estoque/remover")
-def remover_item(item: ItemModel):
-    estoque = carregar_estoque()
+def remover_item(item: ItemModel, db: Session = Depends(get_db)):
     cat = item.categoria.upper()
+    item_bd = db.query(Item).filter_by(categoria=cat, item=item.item).first()
 
-    if cat in estoque and item.item in estoque[cat]:
-        estoque[cat][item.item]["quantidade"] -= item.quantidade
-        if estoque[cat][item.item]["quantidade"] <= 0:
-            del estoque[cat][item.item]
-        salvar_estoque(estoque)
-        return {"msg": "Quantidade removida"}
-    raise HTTPException(status_code=404, detail="Item não encontrado")
-
-@app.delete("/estoque/remover_total")
-def remover_item_total(categoria: str, item: str):
-    estoque = carregar_estoque()
-    cat = categoria.upper()
-
-    if cat in estoque and item in estoque[cat]:
-        del estoque[cat][item]
-        salvar_estoque(estoque)
-        return {"msg": "Item removido completamente"}
-    raise HTTPException(status_code=404, detail="Item não encontrado")
-
-# ✅ NOVO ENDPOINT: atualizar o estoque ao comprar item
-@app.put("/estoque/comprar")
-def comprar_item(item: ItemModel):
-    estoque = carregar_estoque()
-    cat = item.categoria.upper()
-
-    if cat not in estoque or item.item not in estoque[cat]:
+    if not item_bd:
         raise HTTPException(status_code=404, detail="Item não encontrado")
 
-    if estoque[cat][item.item]["quantidade"] < item.quantidade:
+    item_bd.quantidade -= item.quantidade
+    if item_bd.quantidade <= 0:
+        db.delete(item_bd)
+    db.commit()
+    return {"msg": "Quantidade removida"}
+
+@app.delete("/estoque/remover_total")
+def remover_total(categoria: str, item: str, db: Session = Depends(get_db)):
+    cat = categoria.upper()
+    item_bd = db.query(Item).filter_by(categoria=cat, item=item).first()
+
+    if not item_bd:
+        raise HTTPException(status_code=404, detail="Item não encontrado")
+
+    db.delete(item_bd)
+    db.commit()
+    return {"msg": "Item removido completamente"}
+
+@app.put("/estoque/comprar")
+def comprar_item(item: ItemModel, db: Session = Depends(get_db)):
+    cat = item.categoria.upper()
+    item_bd = db.query(Item).filter_by(categoria=cat, item=item.item).first()
+
+    if not item_bd:
+        raise HTTPException(status_code=404, detail="Item não encontrado")
+
+    if item_bd.quantidade < item.quantidade:
         raise HTTPException(status_code=400, detail="Quantidade insuficiente em estoque")
 
-    estoque[cat][item.item]["quantidade"] -= item.quantidade
-
-    if estoque[cat][item.item]["quantidade"] == 0:
-        del estoque[cat][item.item]
-
-    salvar_estoque(estoque)
+    item_bd.quantidade -= item.quantidade
+    if item_bd.quantidade == 0:
+        db.delete(item_bd)
+    db.commit()
     return {"msg": "Compra registrada com sucesso"}
-
-# Execução local
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
